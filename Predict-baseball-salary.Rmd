@@ -1,0 +1,164 @@
+---
+title: "Predict Baseball Player Salary"
+author: "Irene N. Chang"
+date: "04/04/2020"
+output: rmarkdown::github_document
+---
+
+We wish to use different Linear Model selection techniques to predict a baseball player's salary based on previous year's statistics.
+
+First, we take a look at the datasaet. There are some missing values in the dataset, we will omit such observations
+```{r}
+library(ISLR)
+names(Hitters)
+dim(Hitters)
+sum(is.na(Hitters$Salary))
+```
+
+Check again to make sure we no longer have any missing values
+```{r}
+Hitters=na.omit(Hitters)
+dim(Hitters)
+sum(is.na(Hitters))
+```
+
+### Best Subset Selection
+Use regsubsets() function to perform best subset selection by identifying the best model that contains a given number of predictors
+
+```{r}
+library(leaps)
+regfit <- regsubsets(Salary ~., Hitters, nvmax=19)
+regfit.summary=summary(regfit)
+regfit.summary
+```
+
+```{r}
+regfit.summary$rsq
+```
+
+We see that the R-squared statistic increases from 32 %, when only one variable is included in the model, to almost 55%, when all variables are included. R2 statistic increases monotonically as more variables are included. In fact, the performance reaches a plateau and even goes down after the 11th variable. We will now plot a red dot to indicate the model with the largest adjusted R2 statistic.
+```{r}
+#plot statistics against number of variables
+par(mfrow=c(2,2))
+plot(regfit.summary$rss ,xlab="Number of Variables ",ylab="RSS",
+			 type="l")
+plot(regfit.summary$adjr2 ,xlab="Number of Variables ",
+			 ylab="Adjusted RSq",type="l")
+which.max(regfit.summary$adjr2)
+points(11,regfit.summary$adjr2[11], col="red",cex=2,pch=20)
+
+plot(regfit.summary$cp ,xlab="Number of Variables ",ylab="Cp", type="l")
+which.min(regfit.summary$cp)
+points(10,regfit.summary$cp [10],col="red",cex=2,pch=20)
+which.min(regfit.summary$bic)
+plot(regfit.summary$bic ,xlab="Number of Variables ",ylab="BIC",
+		 type="l")
+points(6,regfit.summary$bic [6],col="red",cex=2,pch=20)
+```
+```{r eval = F}
+par(mfrow=c(2,2))
+#plot to see which subset size is best
+plot(regfit, scale="r2")
+plot(regfit,scale="adjr2")
+plot(regfit,scale="Cp")
+plot(regfit,scale="bic")
+#see the coefficients
+coef(regfit,6)
+```
+```{r echo = F, fig.align = "center"}
+par(mfrow=c(1,2))
+#plot to see which subset size is best
+plot(regfit, scale="r2")
+plot(regfit,scale="adjr2")
+```
+
+```{r echo = F, fig.align = "center"}
+par(mfrow=c(1,2))
+plot(regfit,scale="Cp")
+plot(regfit,scale="bic")
+#see the coefficients
+coef(regfit,6)
+```
+
+### Forward and Backward Stewise Selection
+```{r}
+#forward backward
+regfit.fwd=regsubsets (Salary ~.,data=Hitters ,nvmax=19, method ="forward")
+summary(regfit.fwd)
+regfit.bwd=regsubsets (Salary ~.,data=Hitters ,nvmax=19,
+												 method ="backward")
+summary(regfit.bwd)
+
+#nhận xét: ở best subset thì ở mỗi subset size sẽ có những combination khác nhau, còn ở forward and backward thì các variable sẽ luôn xuất hiện từ lúc bắt đầu đc select, aka có một variable sẽ luôn có dấu *
+```
+
+Variable models for forward selection are identical to best selection up to the 6th variable. 
+
+```{r}
+coef(regfit ,7)
+coef(regfit.fwd ,7)
+coef(regfit.bwd ,7)
+```
+
+### Choosing Among Models Using the Validation Set Approach and Cross-Validation
+
+#### Validation set approach
+
+```{r}
+#using cross-validation instead of statistics - just tham khảo vì nó chưa đúng
+set.seed (1)
+train=sample(c(TRUE,FALSE), nrow(Hitters),replace = TRUE)
+test =(! train )
+regfit.best=regsubsets(Salary ~.,data=Hitters[train,], nvmax =19)
+test.mat=model.matrix(Salary~.,data=Hitters[test,])
+val.errors=rep(NA,19)
+for(i in 1:19){
+	coefi=coef(regfit.best,id=i)
+	pred=test.mat[,names(coefi)]%*%coefi
+	val.errors[i]=mean((Hitters$Salary[test]-pred)^2)
+}
+val.errors
+```
+
+We find that the best model is the one that contains 10 variables.
+```{r}
+coef(regfit.best ,10)
+```
+
+To try cross validation approach, we first make our own predict function that includes the analysis steps above 
+```{r}
+predict.regsubsets<- function(model, newdata, id,...){
+	form = as.formula(model$call[[2]])
+	mat = model.matrix(form, newdata)
+	coefi = coef(model, id = id) # id: which model out of 19 models obtained
+	xvars = names(coefi)
+	mat[,xvars]%*%coefi
+}
+```
+
+#### Cross validation
+```{r}
+k = 4
+set.seed(4)
+folds=sample(1:k,nrow(Hitters),replace=TRUE)
+cv.errors=matrix(NA,k,19, dimnames=list(NULL, paste(1:19)))
+
+for(j in 1:k){
+	best.fit = regsubsets(Salary ~., data = Hitters[folds!=j,], nvmax=19)
+	for (i in 1:19){ 
+		pred = predict(best.fit,Hitters[folds==j,],id=i)
+		cv.errors[j, i]= mean((Hitters$Salary[folds==j]-pred)^2)
+	}
+}
+cv.errors
+```
+
+This has given us a 10×19 matrix, of which the (i, j)th element corresponds to the test MSE for the ith cross-validation fold for the best j-variable model
+```{r}
+mean.cv.errors=apply(cv.errors ,2,mean)
+mean.cv.errors
+par(mfrow=c(1,1))
+plot(mean.cv.errors ,type='b')
+```
+
+We see that cross-validation selects an 11-variable model.
